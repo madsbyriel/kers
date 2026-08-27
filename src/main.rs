@@ -1,7 +1,11 @@
+use std::time::Duration;
+
+use futures::FutureExt;
+use tokio::time::sleep;
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
-use crate::keyboard::{InputEventHandler, linux_kbd::LinuxKbd};
+use crate::{keyboard::{InputEventHandler, linux_kbd::LinuxKbd}, keys::Key};
 
 mod keyboard;
 mod keys;
@@ -21,8 +25,8 @@ async fn main() {
     tracing::subscriber::set_global_default(subscriber)
         .expect("setting default subscriber failed");
 
-    let kbd = LinuxKbd::new();
-    while true {
+    let kbd: Box<dyn InputEventHandler> = Box::new(LinuxKbd::new());
+    loop {
         let key = kbd.get_key_async().await;
         let key = match key {
             Ok(v) => v,
@@ -31,8 +35,13 @@ async fn main() {
                 continue;
             }
         };
+
+        if let Key::D = key {
+            break;
+        }
     }
+
+    tokio::time::sleep(Duration::from_secs(1)).await;
 
     println!("Hello, world!");
 }
-

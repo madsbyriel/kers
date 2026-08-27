@@ -1,82 +1,50 @@
-use std::{collections::HashSet, path::PathBuf, sync::Arc};
-use anyhow::{anyhow, bail};
+use std::time::Duration;
+
 use async_trait::async_trait;
-use evdev::{Device, KeyCode};
 use futures::FutureExt;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc};
+use evdev::KeyCode;
+use tokio::sync::broadcast;
+use tokio_util::sync::CancellationToken;
 
-use crate::{Error, Result, keyboard::{DeviceType, InputEventHandler}, keys::Key};
+mod device_info;
 
-struct DeviceInfo {
-    name: String,
-    stream: evdev::EventStream,
-    path: Option<String>,
-    device_type: DeviceType,
-}
+use crate::{Result, keyboard::{InputEventHandler, linux_kbd::device_info::DeviceInfo}, keys::{InputKeyEvent, Key, KeyState}};
 
-impl TryFrom<Device> for DeviceInfo {
-    type Error = Error;
-
-    fn try_from(value: Device) -> Result<Self> {
-        let name = value.name().unwrap_or("Unknown device").to_string();
-        let path = value.physical_path().map(|v| v.to_string());
-        let supported_keys = match value.supported_keys() {
-            None => bail!("No keys available for device: {name}"),
-            Some(v) => {
-                let mut key_set = HashSet::new();
-                for s in v {
-                    key_set.insert(s);
-                }
-                key_set
-            },
-        };
-        let stream = value.into_event_stream()?;
-        let device_type;
-        if supported_keys.contains(&KeyCode::KEY_ENTER) {
-            device_type = DeviceType::Keyboard;
-        }
-        else if supported_keys.contains(&KeyCode::BTN_LEFT) {
-            device_type = DeviceType::Mouse;
-        }
-        else {
-            bail!("Unsupported device type: {name}");
-        }
-
-        Ok(Self {
-            name,
-            path,
-            stream,
-            device_type: device_type,
-        })
-    }
-}
+const DEVICE_SCAN_INTERVAL_MS: u64 = 5000;
 
 pub struct LinuxKbd {
-    devices: Arc<Mutex<Vec<DeviceInfo>>>
+    cancel: CancellationToken
 }
 
 impl LinuxKbd {
     pub fn new() -> Self {
-        let mut devices = Vec::new();
-        for (_, device) in evdev::enumerate() {
-            let info: DeviceInfo = match device.try_into() {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::debug!("Failed to connect device: {}", e);
-                    continue;
-                },
-            };
+        let cancel = CancellationToken::new();
+        let (device_sender, device_receiver) = mpsc::channel::<DeviceInfo>(100);
+        let (key_sender, mut key_receiver) = mpsc::channel::<InputKeyEvent>(100);
 
-            match info.device_type {
-                DeviceType::Keyboard => tracing::info!("Connected keyboard: {}", info.name),
-                DeviceType::Mouse => tracing::info!("Connected mouse: {}", info.name),
+        let cancel_clone = cancel.clone();
+        tokio::spawn(async move {
+            send_devices(device_sender, cancel_clone).await;
+        });
+
+        let cancel_clone = cancel.clone();
+        tokio::spawn(async move {
+            send_keys(device_receiver, key_sender, cancel_clone).await;
+        });
+
+        tokio::spawn(async move {
+            loop {
+                let e = key_receiver.recv().await;
+
+                if let Some(e) = e {
+                    tracing::trace!("Received key event: {}", e);
+                }
             }
-
-            devices.push(info);
-        }
+        });
 
         Self {
-            devices: Arc::new(Mutex::new(devices))
+            cancel
         }
     }
 }
@@ -84,42 +52,122 @@ impl LinuxKbd {
 #[async_trait]
 impl InputEventHandler for LinuxKbd {
     async fn get_key_async(&self) -> Result<Key> {
-        let mut devices = self.devices.lock().await;
-        let device_iter = devices.iter_mut();
-
-        let all_events = device_iter.map(|d| d.stream.next_event().boxed()).collect::<Vec<_>>();
-        let (first_event, index, _) = futures::future::select_all(all_events).await;
-        let first_event = match first_event {
-            Ok(v) => v,
-            Err(e) => {
-                bail!("Error getting event: {}", e);
-            },
-        };
-
-        let device = match devices.get(index) {
-            Some(v) => v,
-            None => {
-                bail!("Error getting device info");
-            },
-        };
-
-        let code = KeyCode::new(first_event.code());
-        let value = first_event.value();
-        let name = &device.name;
-        tracing::trace!("{name}: {code:?} {value}");
-
-        Ok(Key::from(code))
+        Ok(Key::Unknown)
     }
 }
 
-impl From<KeyCode> for Key {
-    fn from(value: KeyCode) -> Self {
-        match value {
-            KeyCode::KEY_A => Key::A,
-            KeyCode::KEY_B => Key::B,
-            KeyCode::KEY_C => Key::C,
-            KeyCode::KEY_D => Key::D,
-            _ => Key::Unknown,
+async fn send_devices(sender: mpsc::Sender<DeviceInfo>, cancel: CancellationToken) {
+    async fn find_devices(sender: mpsc::Sender<DeviceInfo>) {
+        loop {
+            let devices = evdev::enumerate();
+            for (_, device) in devices {
+                let device_info = match DeviceInfo::try_from(device) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        tracing::error!("Failed to connect device: {}", e);
+                        continue;
+                    },
+                };
+
+                if let Err(e) = sender.send(device_info).await {
+                    tracing::error!("Failed to send device, shutting down device sender: {}", e);
+                    continue;
+                }
+            }
+
+            tokio::time::sleep(Duration::from_millis(DEVICE_SCAN_INTERVAL_MS)).await;
         }
     }
+
+
+    futures::select! {
+        _ = find_devices(sender).fuse() => tracing::info!("Device sender shutting down"),
+        _ = cancel.cancelled().fuse() => tracing::info!("Device sender cancelled, shutting down"),
+    }
+}
+
+async fn send_keys(
+    receiver: mpsc::Receiver<DeviceInfo>,
+    sender: mpsc::Sender<InputKeyEvent>,
+    cancel: CancellationToken
+) {
+    futures::select! {
+        _ = key_loop(receiver, sender).fuse() => tracing::info!("Key sender shutting down"),
+        _ = cancel.cancelled().fuse() => tracing::info!("Key sender cancelled, shutting down"),
+    };
+}
+
+async fn key_loop(
+    mut receiver: mpsc::Receiver<DeviceInfo>,
+    sender: mpsc::Sender<InputKeyEvent>,
+) {
+    let mut devices = vec![];
+
+    loop {
+        loop {
+            let v = match receiver.try_recv() {
+                Ok(v) => v,
+                Err(e) => {
+                    match e {
+                        mpsc::error::TryRecvError::Empty => {
+                            break;
+                        },
+                        mpsc::error::TryRecvError::Disconnected => {
+                            tracing::info!("Device receiver disconnected, shutting down");
+                            return;
+                        },
+                    };
+                },
+            };
+
+            if devices.contains(&v) {
+                continue;
+            }
+
+            tracing::trace!("Added device: {}", v.name);
+            devices.push(v);
+        }
+
+        if devices.is_empty() {
+            tokio::time::sleep(Duration::from_millis(1000)).await;
+            continue;
+        }
+
+        let futures = devices.iter_mut().map(|device| {
+            device.stream.next_event().boxed()
+        });
+
+        let (input_event, idx, _) = futures::future::select_all(futures).await;
+        if let Ok(input_event) = input_event {
+            tracing::trace!("Received input event: {:?}", input_event);
+
+            match send_key(input_event, &sender).await {
+                Ok(_) => (),
+                Err(e) => {
+                    tracing::error!("Error sending key: {}", e);
+                },
+            };
+        }
+
+        if let Err(e) = input_event {
+            tracing::error!("Error reading input event: {}", e);
+        }
+    }
+}
+
+async fn send_key(event: evdev::InputEvent, sender: &mpsc::Sender<InputKeyEvent>) -> Result<()> {
+    tracing::trace!("Sending key: {:?}", event);
+    let value = event.value();
+    let key = KeyCode::new(event.code());
+
+    let key_state: KeyState = value.try_into()?;
+
+    let event = InputKeyEvent {
+        key: key.into(),
+        state: key_state
+    };
+
+    sender.send(event).await?;
+
+    Ok(())
 }
