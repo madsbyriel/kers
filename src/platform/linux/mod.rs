@@ -1,0 +1,144 @@
+//! Linux backend, built on [`evdev`] (`/dev/input/event*`).
+//!
+//! # Architecture
+//!
+//! - a discovery task polls [`evdev::enumerate`] every few seconds and
+//!   forwards the current device set;
+//! - the device manager diffs each scan against the devices it is already
+//!   reading: it starts one reader task per new input device and aborts
+//!   readers for devices that disappeared;
+//! - each reader task maps raw evdev events into [`InputKeyEvent`]s and
+//!   broadcasts them;
+//! - [`LinuxKeyboard`] consumes the broadcast to serve
+//!   [`InputEventListener`] and any additional subscribers.
+//!
+//! Polling is a placeholder: a udev/inotify hotplug watcher can replace the
+//! discovery task later without changing the rest.
+//!
+//! Raw key codes carried by [`crate::keys::Key::Other`] are Linux evdev key
+//! codes (keyboard keys live in the `KEY_*` range, mouse buttons in the
+//! `BTN_*` range of the same code space).
+
+mod device;
+mod manager;
+mod mapping;
+
+use std::time::Duration;
+
+use async_trait::async_trait;
+use tokio::sync::{broadcast, mpsc};
+use tokio_util::sync::CancellationToken;
+
+use crate::Result;
+use crate::api::InputEventListener;
+use crate::keys::InputKeyEvent;
+
+use device::DeviceInfo;
+use manager::run_device_manager;
+
+/// How often the system device list is re-scanned.
+const DEVICE_SCAN_INTERVAL: Duration = Duration::from_secs(5);
+
+/// The default Linux keyboard backend.
+///
+/// Created with [`LinuxKeyboard::new`]; must be called from within a Tokio
+/// runtime.
+pub struct LinuxKeyboard {
+    events: broadcast::Receiver<InputKeyEvent>,
+    sender: broadcast::Sender<InputKeyEvent>,
+    cancel: CancellationToken,
+}
+
+impl LinuxKeyboard {
+    /// Start listening to all connected devices that report key or button
+    /// events (keyboards and mice).
+    pub fn new() -> Self {
+        let cancel = CancellationToken::new();
+        let (sender, events) = broadcast::channel::<InputKeyEvent>(1024);
+        let (device_sender, device_receiver) = mpsc::channel::<Vec<DeviceInfo>>(64);
+
+        tokio::spawn(discover_devices(device_sender, cancel.clone()));
+        tokio::spawn(run_device_manager(
+            device_receiver,
+            sender.clone(),
+            cancel.clone(),
+        ));
+
+        Self {
+            events,
+            sender,
+            cancel,
+        }
+    }
+
+    /// Subscribe an additional consumer to the event stream.
+    ///
+    /// Every subscriber receives every event; a subscriber that falls behind
+    /// gets `broadcast::error::RecvError::Lagged` from `recv()` and may
+    /// miss events.
+    pub fn subscribe(&self) -> broadcast::Receiver<InputKeyEvent> {
+        self.sender.subscribe()
+    }
+}
+
+impl Default for LinuxKeyboard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for LinuxKeyboard {
+    fn drop(&mut self) {
+        // Stop discovery, the device manager, and all per-device readers.
+        self.cancel.cancel();
+    }
+}
+
+#[async_trait]
+impl InputEventListener for LinuxKeyboard {
+    async fn next_event(&mut self) -> Result<InputKeyEvent> {
+        loop {
+            match self.events.recv().await {
+                Ok(event) => return Ok(event),
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    tracing::warn!("{skipped} key events were dropped: consumer too slow");
+                }
+                Err(broadcast::error::RecvError::Closed) => {
+                    return Err(crate::Error::EventSourceClosed);
+                }
+            }
+        }
+    }
+}
+
+/// Poll the system device list and forward each full scan to the device
+/// manager.
+async fn discover_devices(sender: mpsc::Sender<Vec<DeviceInfo>>, cancel: CancellationToken) {
+    loop {
+        let mut devices = Vec::new();
+        for (path, device) in evdev::enumerate() {
+            match DeviceInfo::from_device(device, path) {
+                Ok(Some(info)) => {
+                    tracing::trace!("found device: {}", info.id.name);
+                    devices.push(info);
+                }
+                Ok(None) => {} // not a keyboard
+                Err(error) => tracing::warn!("skipping device: {error}"),
+            }
+        }
+
+        if sender.send(devices).await.is_err() {
+            tracing::debug!("device manager gone; discovery shutting down");
+            return;
+        }
+
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => {
+                tracing::debug!("discovery cancelled; shutting down");
+                return;
+            }
+            _ = tokio::time::sleep(DEVICE_SCAN_INTERVAL) => {}
+        }
+    }
+}
