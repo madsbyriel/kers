@@ -2,6 +2,8 @@
 name = "keyrs"
 version = "0.1.0"
 edition = "2024"
+description = "A library for reading key events from a keyboard"
+license = "MIT"
 
 [dependencies]
 async-trait = "0.1.92"
