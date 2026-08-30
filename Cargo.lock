@@ -81,7 +81,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1944426bf7d03f1d14f708785e4b33efd750b36d48a157b836b3efc15ede8e1d"
 
 [[package]]
-name = "kers"
+name = "keyrs"
 version = "0.1.0"
 dependencies = [
  "async-trait",

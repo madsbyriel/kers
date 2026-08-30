@@ -177,7 +177,7 @@ mod tests {
     use super::*;
     use std::time::SystemTime;
 
-    /// Every key code kers knows about, and the variant it must map to.
+    /// Every key code keyrs knows about, and the variant it must map to.
     /// Generated together with the enum and `map_key` from one key list.
     const MAPPINGS: &[(u16, Key)] = &[
         // Main keys (US layout)

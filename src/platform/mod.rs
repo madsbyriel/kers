@@ -13,7 +13,7 @@ pub mod linux;
 
 #[cfg(not(target_os = "linux"))]
 compile_error!(
-    "kers: no keyboard backend exists for this platform yet (only Linux is implemented)"
+    "keyrs: no keyboard backend exists for this platform yet (only Linux is implemented)"
 );
 
 /// The keyboard backend selected for the current platform.

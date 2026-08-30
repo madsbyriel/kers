@@ -5,11 +5,11 @@
 //! On Linux this needs read access to `/dev/input/event*` (typically via
 //! the `input` group or root).
 
-use kers::keys::{Key, KeyState};
-use kers::{InputEventListener, default_keyboard};
+use keyrs::keys::{Key, KeyState};
+use keyrs::{InputEventListener, default_keyboard};
 
 #[tokio::main]
-async fn main() -> kers::Result<()> {
+async fn main() -> keyrs::Result<()> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::WARN)
         .init();

@@ -1,9 +1,9 @@
-//! Error types for kers.
+//! Error types for keyrs.
 
 use std::fmt::{self, Display, Formatter};
 use std::io;
 
-/// Errors returned by kers.
+/// Errors returned by keyrs.
 ///
 /// Hand-written instead of deriving via `thiserror` to keep the dependency
 /// surface minimal; switch to `thiserror` if the variant list grows.

@@ -1,4 +1,4 @@
-//! # kers
+//! # keyrs
 //!
 //! Cross-platform input events: listen to key presses and mouse button
 //! clicks, and (planned) send them back.
@@ -15,10 +15,10 @@
 //! # Example
 //!
 //! ```no_run
-//! use kers::{default_keyboard, InputEventListener};
+//! use keyrs::{default_keyboard, InputEventListener};
 //!
 //! #[tokio::main]
-//! async fn main() -> kers::Result<()> {
+//! async fn main() -> keyrs::Result<()> {
 //!     let mut keyboard = default_keyboard();
 //!     loop {
 //!         println!("{}", keyboard.next_event().await?);
@@ -37,5 +37,5 @@ pub use error::Error;
 pub use keys::{DeviceId, InputKeyEvent, Key, KeyState};
 pub use platform::{DefaultKeyboard, default_keyboard};
 
-/// The standard result type used throughout kers.
+/// The standard result type used throughout keyrs.
 pub type Result<T> = std::result::Result<T, Error>;
