@@ -16,6 +16,8 @@ pub enum Error {
 
     /// The event source has shut down; no further events will be delivered.
     EventSourceClosed,
+
+    KeyNotMapped(crate::keys::Key)
 }
 
 impl Display for Error {
@@ -23,6 +25,7 @@ impl Display for Error {
         match self {
             Error::Io(error) => write!(f, "device I/O error: {error}"),
             Error::EventSourceClosed => write!(f, "event source closed"),
+            Error::KeyNotMapped(key) => write!(f, "key not mapped: {key:?}"),
         }
     }
 }
@@ -32,6 +35,7 @@ impl std::error::Error for Error {
         match self {
             Error::Io(error) => Some(error),
             Error::EventSourceClosed => None,
+            Error::KeyNotMapped(_) => None,
         }
     }
 }

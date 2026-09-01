@@ -29,6 +29,16 @@ macro_rules! define_keys {
             Other(u16),
         }
 
+        impl Key {
+            pub fn get_all_keys() -> Vec<Key> {
+                vec![
+                    $(
+                        Key::$variant,
+                    )*
+                ]
+            }
+        }
+
         impl Display for Key {
             fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
                 match self {

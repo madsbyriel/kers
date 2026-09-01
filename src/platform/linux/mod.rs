@@ -26,10 +26,11 @@ mod mapping;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use evdev::uinput::VirtualDevice;
 use tokio::sync::{broadcast, mpsc};
 use tokio_util::sync::CancellationToken;
 
-use crate::Result;
+use crate::{InputEventSender, Key, Result};
 use crate::api::InputEventListener;
 use crate::keys::InputKeyEvent;
 
@@ -47,12 +48,13 @@ pub struct LinuxKeyboard {
     events: broadcast::Receiver<InputKeyEvent>,
     sender: broadcast::Sender<InputKeyEvent>,
     cancel: CancellationToken,
+    v_device: VirtualDevice,
 }
 
 impl LinuxKeyboard {
     /// Start listening to all connected devices that report key or button
     /// events (keyboards and mice).
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self> {
         let cancel = CancellationToken::new();
         let (sender, events) = broadcast::channel::<InputKeyEvent>(1024);
         let (device_sender, device_receiver) = mpsc::channel::<Vec<DeviceInfo>>(64);
@@ -64,11 +66,20 @@ impl LinuxKeyboard {
             cancel.clone(),
         ));
 
-        Self {
+        let v_device = match create_virtual_device() {
+            Ok(v) => Ok(v),
+            Err(e) => {
+                cancel.cancel();
+                Err(e)
+            },
+        }?;
+
+        Ok(Self {
             events,
             sender,
             cancel,
-        }
+            v_device,
+        })
     }
 
     /// Subscribe an additional consumer to the event stream.
@@ -78,12 +89,6 @@ impl LinuxKeyboard {
     /// miss events.
     pub fn subscribe(&self) -> broadcast::Receiver<InputKeyEvent> {
         self.sender.subscribe()
-    }
-}
-
-impl Default for LinuxKeyboard {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -108,6 +113,13 @@ impl InputEventListener for LinuxKeyboard {
                 }
             }
         }
+    }
+}
+
+#[async_trait]
+impl InputEventSender for LinuxKeyboard {
+    async fn send_event(&mut self, event: InputKeyEvent) -> Result<()> {
+        todo!()
     }
 }
 
@@ -141,4 +153,27 @@ async fn discover_devices(sender: mpsc::Sender<Vec<DeviceInfo>>, cancel: Cancell
             _ = tokio::time::sleep(DEVICE_SCAN_INTERVAL) => {}
         }
     }
+}
+
+fn get_key_set() -> evdev::AttributeSet<evdev::KeyCode> {
+    let mut keys = evdev::AttributeSet::new();
+
+    // Support all keys we can map from the crates keyset to evdev keycodes.
+    for key in Key::get_all_keys() {
+        let key_code = match evdev::KeyCode::try_from(key) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        keys.insert(key_code);
+    }
+
+    keys
+}
+
+fn create_virtual_device() -> Result<VirtualDevice> {
+    let builder = VirtualDevice::builder()?;
+    let keys = get_key_set();
+
+    let virtual_device = builder.with_keys(&keys)?.build()?;
+    Ok(virtual_device)
 }

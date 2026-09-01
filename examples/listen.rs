@@ -14,7 +14,7 @@ async fn main() -> keyrs::Result<()> {
         .with_max_level(tracing::Level::WARN)
         .init();
 
-    let mut keyboard = default_keyboard();
+    let mut keyboard = default_keyboard().expect("Couldn't create keyboard");
     println!("Listening for key and mouse button events; press D to exit.");
 
     loop {

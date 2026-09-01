@@ -24,6 +24,6 @@ pub type DefaultKeyboard = linux::LinuxKeyboard;
 ///
 /// Must be called from within a Tokio runtime.
 #[cfg(target_os = "linux")]
-pub fn default_keyboard() -> DefaultKeyboard {
+pub fn default_keyboard() -> crate::Result<DefaultKeyboard> {
     DefaultKeyboard::new()
 }
