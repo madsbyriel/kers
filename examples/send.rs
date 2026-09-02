@@ -14,7 +14,8 @@ use keyrs::{InputEventSender, default_keyboard};
 #[tokio::main]
 async fn main() -> keyrs::Result<()> {
     let mut keyboard = default_keyboard().expect("Couldn't create keyboard");
-    println!("Injecting 'a', 'b', 'c' key presses...");
+    println!("Injecting 'a', 'b', 'c' key presses in 1 second...");
+    tokio::time::sleep(Duration::from_millis(1000)).await;
 
     for key in [Key::A, Key::B, Key::C] {
         keyboard.send_event(key, KeyState::Down).await?;
