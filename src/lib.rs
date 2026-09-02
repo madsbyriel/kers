@@ -1,7 +1,7 @@
 //! # keyrs
 //!
 //! Cross-platform input events: listen to key presses and mouse button
-//! clicks, and (planned) send them back.
+//! clicks, and send them back.
 //!
 //! # Layout
 //!
@@ -19,7 +19,7 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> keyrs::Result<()> {
-//!     let mut keyboard = default_keyboard();
+//!     let mut keyboard = default_keyboard()?;
 //!     loop {
 //!         println!("{}", keyboard.next_event().await?);
 //!     }

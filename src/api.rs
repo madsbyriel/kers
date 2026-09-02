@@ -7,7 +7,7 @@
 use async_trait::async_trait;
 
 use crate::Result;
-use crate::keys::InputKeyEvent;
+use crate::keys::{InputKeyEvent, Key, KeyState};
 
 /// A backend that listens for key and mouse button events.
 ///
@@ -22,11 +22,12 @@ pub trait InputEventListener: Send + Sync {
 
 /// A backend that sends (injects) keyboard events.
 ///
-/// This is the reserved send half of the goal: no backend implements it
-/// yet, but defining it next to [`InputEventListener`] fixes the shape so
-/// listen and send can live behind the same backend object when they land.
+/// The backend decides which device the events go out through (on Linux, a
+/// uinput virtual device), so no device id is part of the signature. An
+/// injected event flows through the system like an event from a physical
+/// keyboard, so a listening backend on the same machine receives it too.
 #[async_trait]
 pub trait InputEventSender: Send + Sync {
     /// Inject a key event.
-    async fn send_event(&mut self, event: InputKeyEvent) -> Result<()>;
+    async fn send_event(&mut self, key: Key, state: KeyState) -> Result<()>;
 }

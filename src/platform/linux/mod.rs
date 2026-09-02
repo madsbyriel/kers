@@ -10,7 +10,10 @@
 //! - each reader task maps raw evdev events into [`InputKeyEvent`]s and
 //!   broadcasts them;
 //! - [`LinuxKeyboard`] consumes the broadcast to serve
-//!   [`InputEventListener`] and any additional subscribers.
+//!   [`InputEventListener`] and any additional subscribers;
+//! - sending goes the other way: [`LinuxKeyboard`] injects events through
+//!   a uinput [`VirtualDevice`] created at startup, so injected keys reach
+//!   the system exactly like events from a physical keyboard.
 //!
 //! Polling is a placeholder: a udev/inotify hotplug watcher can replace the
 //! discovery task later without changing the rest.
@@ -30,9 +33,9 @@ use evdev::uinput::VirtualDevice;
 use tokio::sync::{broadcast, mpsc};
 use tokio_util::sync::CancellationToken;
 
-use crate::{InputEventSender, Key, Result};
 use crate::api::InputEventListener;
 use crate::keys::InputKeyEvent;
+use crate::{InputEventSender, Key, KeyState, Result};
 
 use device::DeviceInfo;
 use manager::run_device_manager;
@@ -53,7 +56,11 @@ pub struct LinuxKeyboard {
 
 impl LinuxKeyboard {
     /// Start listening to all connected devices that report key or button
-    /// events (keyboards and mice).
+    /// events (keyboards and mice), and open the uinput virtual device
+    /// used to send events back.
+    ///
+    /// Requires read access to `/dev/input/event*` (to listen) and write
+    /// access to `/dev/uinput` (to send).
     pub fn new() -> Result<Self> {
         let cancel = CancellationToken::new();
         let (sender, events) = broadcast::channel::<InputKeyEvent>(1024);
@@ -71,7 +78,7 @@ impl LinuxKeyboard {
             Err(e) => {
                 cancel.cancel();
                 Err(e)
-            },
+            }
         }?;
 
         Ok(Self {
@@ -118,8 +125,20 @@ impl InputEventListener for LinuxKeyboard {
 
 #[async_trait]
 impl InputEventSender for LinuxKeyboard {
-    async fn send_event(&mut self, event: InputKeyEvent) -> Result<()> {
-        todo!()
+    async fn send_event(&mut self, key: Key, state: KeyState) -> Result<()> {
+        // The virtual device advertises exactly the keys `get_key_set`
+        // produced, i.e. every key that maps back to an evdev code.
+        // Keys outside that set (`Key::Other`) fail here with
+        // `Error::KeyNotMapped` instead of a kernel-level rejection.
+        let code = evdev::KeyCode::try_from(key)?;
+
+        let event = evdev::InputEvent::new(evdev::EventType::KEY.0, code.code(), state.to_value());
+
+        // `emit` appends the SYN_REPORT that tells the input core the
+        // event is complete.
+        self.v_device.emit(&[event])?;
+
+        Ok(())
     }
 }
 
@@ -174,6 +193,9 @@ fn create_virtual_device() -> Result<VirtualDevice> {
     let builder = VirtualDevice::builder()?;
     let keys = get_key_set();
 
-    let virtual_device = builder.with_keys(&keys)?.build()?;
+    let virtual_device = builder
+        .name("keyrs virtual keyboard")
+        .with_keys(&keys)?
+        .build()?;
     Ok(virtual_device)
 }

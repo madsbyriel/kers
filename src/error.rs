@@ -17,7 +17,7 @@ pub enum Error {
     /// The event source has shut down; no further events will be delivered.
     EventSourceClosed,
 
-    KeyNotMapped(crate::keys::Key)
+    KeyNotMapped(crate::keys::Key),
 }
 
 impl Display for Error {

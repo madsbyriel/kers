@@ -272,6 +272,18 @@ impl KeyState {
             _ => None,
         }
     }
+
+    /// The numeric value this state represents.
+    ///
+    /// The inverse of [`KeyState::from_value`]: `Up` = 0, `Down` = 1,
+    /// `Hold` = 2.
+    pub fn to_value(self) -> i32 {
+        match self {
+            KeyState::Up => 0,
+            KeyState::Down => 1,
+            KeyState::Hold => 2,
+        }
+    }
 }
 
 impl Display for KeyState {
@@ -331,6 +343,20 @@ mod tests {
         assert_eq!(KeyState::from_value(1), Some(KeyState::Down));
         assert_eq!(KeyState::from_value(2), Some(KeyState::Hold));
         assert_eq!(KeyState::from_value(3), None);
+    }
+
+    #[test]
+    fn key_state_to_value() {
+        assert_eq!(KeyState::Up.to_value(), 0);
+        assert_eq!(KeyState::Down.to_value(), 1);
+        assert_eq!(KeyState::Hold.to_value(), 2);
+    }
+
+    #[test]
+    fn key_state_value_roundtrip() {
+        for value in 0..=2 {
+            assert_eq!(KeyState::from_value(value).unwrap().to_value(), value);
+        }
     }
 
     #[test]

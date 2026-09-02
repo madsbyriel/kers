@@ -1,8 +1,8 @@
 //! An open evdev device wrapped with its cross-platform identity.
 
-use std::path::PathBuf;
 use crate::Result;
 use crate::keys::DeviceId;
+use std::path::PathBuf;
 
 /// An open evdev device and its [`DeviceId`].
 pub(super) struct DeviceInfo {
