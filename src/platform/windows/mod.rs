@@ -54,10 +54,10 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, MOUSEINPUT, SendInput,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, GetMessageW, KBDLLHOOKSTRUCT, LLKHF_EXTENDED, LLKHF_UP, MSG, MSLLHOOKSTRUCT,
-    PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD_LL, WH_MOUSE_LL,
-    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_QUIT, WM_RBUTTONDOWN,
-    WM_RBUTTONUP, WM_XBUTTONDOWN, WM_XBUTTONUP, XBUTTON1, XBUTTON2,
+    CallNextHookEx, GetMessageW, HHOOK, KBDLLHOOKSTRUCT, LLKHF_EXTENDED, LLKHF_UP, MSG,
+    MSLLHOOKSTRUCT, PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD_LL,
+    WH_MOUSE_LL, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_QUIT,
+    WM_RBUTTONDOWN, WM_RBUTTONUP, WM_XBUTTONDOWN, WM_XBUTTONUP, XBUTTON1, XBUTTON2,
 };
 
 use crate::api::InputEventListener;
@@ -84,7 +84,7 @@ pub struct WindowsKeyboard {
 
 // The sender the hook callbacks publish to.
 //
-// Hook callbacks run in the hook thread (see [`run_hook_thread`]), so
+// Hook callbacks run in the hook thread (see [`serve_message_loop`]), so
 // they read this thread-local without synchronization.
 thread_local! {
     static HOOK_SENDER: RefCell<Option<broadcast::Sender<InputKeyEvent>>> = const {
@@ -108,9 +108,21 @@ impl WindowsKeyboard {
                 let cancel = cancel.clone();
                 let hook_thread_id = hook_thread_id.clone();
                 move || {
-                    // Report hook installation failures back to `new`.
-                    let result = run_hook_thread(sender, cancel, &hook_thread_id);
-                    let _ = result_sender.send(result);
+                    // Report the installation outcome back to `new` as
+                    // soon as the hooks are in place. `new` must not wait
+                    // for this thread to finish: it stays alive serving
+                    // the message loop until the keyboard is dropped.
+                    match install_hooks(sender, cancel, &hook_thread_id) {
+                        Ok(hooks) => {
+                            let _ = result_sender.send(Ok(()));
+                            if let Some((keyboard_hook, mouse_hook)) = hooks {
+                                serve_message_loop(keyboard_hook, mouse_hook);
+                            }
+                        }
+                        Err(error) => {
+                            let _ = result_sender.send(Err(error));
+                        }
+                    }
                 }
             })
             .map_err(Error::from)?;
@@ -182,13 +194,16 @@ impl InputEventSender for WindowsKeyboard {
     }
 }
 
-/// Install both hooks and run the message loop that keeps them alive,
-/// until `WM_QUIT` arrives or the cancellation token fires.
-fn run_hook_thread(
+/// Install both hooks on the current thread.
+///
+/// Returns the hook handles on success, `Ok(None)` if the keyboard was
+/// dropped before this thread ran (in which case nothing is installed),
+/// or an error if a hook could not be installed.
+fn install_hooks(
     sender: broadcast::Sender<InputKeyEvent>,
     cancel: CancellationToken,
     thread_id: &AtomicU32,
-) -> Result<()> {
+) -> Result<Option<(HHOOK, HHOOK)>> {
     unsafe {
         // SAFETY: `GetCurrentThreadId` has no preconditions.
         thread_id.store(GetCurrentThreadId(), Ordering::Relaxed);
@@ -196,7 +211,7 @@ fn run_hook_thread(
         // The keyboard may have been dropped before this thread got here;
         // install nothing in that case.
         if cancel.is_cancelled() {
-            return Ok(());
+            return Ok(None);
         }
 
         HOOK_SENDER.with(|slot| *slot.borrow_mut() = Some(sender));
@@ -224,21 +239,33 @@ fn run_hook_thread(
             return Err(error.into());
         }
 
-        let mut message = std::mem::zeroed::<MSG>();
-        loop {
-            // The low-level hook callbacks are dispatched by the system
-            // while this call waits. `GetMessageW` returns 0 for `WM_QUIT`
-            // and -1 on error; both end the loop.
-            let result = GetMessageW(&mut message, std::ptr::null_mut(), 0, 0);
-            if result <= 0 {
-                break;
-            }
-        }
+        Ok(Some((keyboard_hook, mouse_hook)))
+    }
+}
 
+/// Run the message loop that keeps the hooks alive, until `WM_QUIT`
+/// arrives (posted from [`Drop`]), then remove the hooks.
+///
+/// Must be called from the thread that installed the hooks.
+fn serve_message_loop(keyboard_hook: HHOOK, mouse_hook: HHOOK) {
+    // SAFETY: `MSG` is plain data; zeroed is a valid initial value.
+    let mut message = unsafe { std::mem::zeroed::<MSG>() };
+    loop {
+        // The low-level hook callbacks are dispatched by the system
+        // while this call waits. `GetMessageW` returns 0 for `WM_QUIT`
+        // and -1 on error; both end the loop.
+        let result = unsafe { GetMessageW(&mut message, std::ptr::null_mut(), 0, 0) };
+        if result <= 0 {
+            break;
+        }
+    }
+
+    // SAFETY: the hooks are still installed and this is the thread that
+    // installed them.
+    unsafe {
         UnhookWindowsHookEx(keyboard_hook);
         UnhookWindowsHookEx(mouse_hook);
     }
-    Ok(())
 }
 
 /// Publish one event from a hook callback.
