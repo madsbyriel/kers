@@ -1,9 +1,9 @@
 //! The platform-neutral key event vocabulary.
 //!
 //! Backends convert their native event representations into these types;
-//! no backend-specific types may appear here. On Linux, the evdev
-//! conversion lives in `platform::linux`; other backends will bring their
-//! own conversions.
+//! no backend-specific types may appear here. The Linux conversion lives
+//! in `platform::linux`, the Windows conversion in `platform::windows`;
+//! other backends will bring their own conversions.
 
 use std::fmt::{self, Display, Formatter};
 use std::time::SystemTime;
@@ -25,7 +25,9 @@ macro_rules! define_keys {
             $(
                 $variant,
             )*
-            /// A key without a named variant; carries the platform's raw key code.
+            /// A key without a named variant; carries the platform's raw
+            /// key code (an evdev key code on Linux, a Windows virtual-key
+            /// code on Windows).
             Other(u16),
         }
 

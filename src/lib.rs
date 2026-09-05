@@ -10,7 +10,7 @@
 //! - [`api`]: the [`InputEventListener`] / [`InputEventSender`] traits that
 //!   every backend implements.
 //! - [`platform`]: per-OS backends, selected at compile time by `target_os`.
-//!   Only Linux is implemented so far.
+//!   Linux and Windows are implemented.
 //!
 //! # Example
 //!

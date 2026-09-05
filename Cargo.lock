@@ -90,6 +90,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "windows-sys",
 ]
 
 [[package]]

@@ -2,9 +2,11 @@
 //!
 //! Run with: `cargo run --example send`
 //!
-//! On Linux this needs write access to `/dev/uinput`. The events are sent
-//! as raw key codes, so a plain `Key::A` press produces lowercase "a"
-//! unless a shift modifier is held.
+//! On Linux this needs write access to `/dev/uinput`; on Windows it needs
+//! no special privileges (though UIPI blocks injection into processes
+//! running at a higher integrity level). The events are sent as raw key
+//! codes, so a plain `Key::A` press produces lowercase "a" unless a shift
+//! modifier is held.
 
 use std::time::Duration;
 

@@ -3,7 +3,7 @@
 //! Run with: `cargo run --example listen`
 //!
 //! On Linux this needs read access to `/dev/input/event*` (typically via
-//! the `input` group or root).
+//! the `input` group or root); on Windows it needs no special privileges.
 
 use keyrs::keys::{Key, KeyState};
 use keyrs::{InputEventListener, default_keyboard};

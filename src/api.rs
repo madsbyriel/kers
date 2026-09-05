@@ -13,7 +13,7 @@ use crate::keys::{InputKeyEvent, Key, KeyState};
 ///
 /// [`InputEventListener::next_event`] waits until an event is available and
 /// returns it. Concrete backends may additionally offer fan-out
-/// subscriptions (see `LinuxKeyboard::subscribe`).
+/// subscriptions (see the `subscribe` methods on the concrete backends).
 #[async_trait]
 pub trait InputEventListener: Send + Sync {
     /// Wait for and return the next key event.
@@ -22,10 +22,11 @@ pub trait InputEventListener: Send + Sync {
 
 /// A backend that sends (injects) keyboard events.
 ///
-/// The backend decides which device the events go out through (on Linux, a
-/// uinput virtual device), so no device id is part of the signature. An
-/// injected event flows through the system like an event from a physical
-/// keyboard, so a listening backend on the same machine receives it too.
+/// The backend decides which device the events go out through (on Linux,
+/// a uinput virtual device; on Windows, the `SendInput` API), so no
+/// device id is part of the signature. An injected event flows through
+/// the system like an event from a physical keyboard, so a listening
+/// backend on the same machine receives it too.
 #[async_trait]
 pub trait InputEventSender: Send + Sync {
     /// Inject a key event.
